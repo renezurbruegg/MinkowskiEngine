@@ -148,9 +148,8 @@ Extension = CUDAExtension
 extra_link_args = []
 include_dirs = []
 libraries = []
-CC_FLAGS = []
-NVCC_FLAGS = []
-
+CC_FLAGS =  []
+NVCC_FLAGS = [f"-L{os.environ['CUDA_HOME']}/lib -lcudart "]
 if CPU_ONLY:
     print("--------------------------------")
     print("| WARNING: CPU_ONLY build set  |")
@@ -161,7 +160,7 @@ else:
     print("| CUDA compilation set         |")
     print("--------------------------------")
     # system python installation
-    libraries.append("cusparse")
+    NVCC_FLAGS.append("-lcusparse")
 
 if not (CUDA_HOME is False):  # False when not set, str otherwise
     print(f"Using CUDA_HOME={CUDA_HOME}")

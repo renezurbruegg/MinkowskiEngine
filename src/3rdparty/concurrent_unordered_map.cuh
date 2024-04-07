@@ -18,22 +18,24 @@
 #define CONCURRENT_UNORDERED_MAP_CUH
 
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/device_atomics.cuh>
+#include <cudf/detail/utilities/hash_functions.cuh>
+#include <cudf/utilities/error.hpp>
 #include <hash/hash_allocator.cuh>
 #include <hash/helper_functions.cuh>
 #include <hash/managed.cuh>
-#include <cudf/detail/utilities/hash_functions.cuh>
-#include <cudf/detail/utilities/device_atomics.cuh>
-#include <cudf/utilities/error.hpp>
 
-#include <thrust/pair.h>
 #include <thrust/count.h>
+#include <thrust/pair.h>
 
-#include <functional>
-#include <memory>
+#include <thrust/execution_policy.h>
+
 #include <cassert>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <type_traits>
 
 namespace {
@@ -129,7 +131,7 @@ template <typename Key,
           typename Equality  = equal_to<Key>,
           typename Allocator = default_allocator<thrust::pair<Key, Element>>>
 class concurrent_unordered_map {
- public:
+public:
   using size_type      = size_t;
   using hasher         = Hasher;
   using key_equal      = Equality;
@@ -140,7 +142,7 @@ class concurrent_unordered_map {
   using iterator       = cycle_iterator_adapter<value_type*>;
   using const_iterator = const cycle_iterator_adapter<value_type*>;
 
- public:
+public:
   /**
    * @brief Factory to construct a new concurrent unordered map.
    *
@@ -170,23 +172,23 @@ class concurrent_unordered_map {
    * @param stream CUDA stream to use for device operations.
    **/
   static auto create(size_type capacity,
-                     const mapped_type unused_element = std::numeric_limits<mapped_type>::max(),
-                     const key_type unused_key        = std::numeric_limits<key_type>::max(),
-                     const Hasher& hash_function      = hasher(),
-                     const Equality& equal            = key_equal(),
-                     const allocator_type& allocator  = allocator_type(),
-                     cudaStream_t stream              = 0)
+         const mapped_type unused_element = std::numeric_limits<mapped_type>::max(),
+         const key_type unused_key        = std::numeric_limits<key_type>::max(),
+         const Hasher& hash_function      = hasher(),
+         const Equality& equal            = key_equal(),
+         const allocator_type& allocator  = allocator_type(),
+         cudaStream_t stream              = 0)
   {
     CUDF_FUNC_RANGE();
     using Self = concurrent_unordered_map<Key, Element, Hasher, Equality, Allocator>;
 
     // Note: need `(*p).destroy` instead of `p->destroy` here
     // due to compiler bug: https://github.com/rapidsai/cudf/pull/5692
-    auto deleter = [stream](Self* p) { (*p).destroy(stream); };
+    auto deleter = [stream](Self *p) { (*p).destroy(stream); };
 
-    return std::unique_ptr<Self, std::function<void(Self*)>>{
-      new Self(capacity, unused_element, unused_key, hash_function, equal, allocator, stream),
-      deleter};
+    Self *self = new Self(capacity, unused_element, unused_key, hash_function,
+                          equal, allocator, stream);
+    return std::shared_ptr<Self>(self, deleter);
   }
 
   /**
@@ -258,14 +260,14 @@ class concurrent_unordered_map {
 
   __host__ __device__ inline size_type capacity() const { return m_capacity; }
 
- private:
+private:
   /**
    * @brief Enumeration of the possible results of attempting to insert into
    *a hash bucket
    **/
   enum class insert_result {
     CONTINUE,  ///< Insert did not succeed, continue trying to insert
-               ///< (collision)
+              ///< (collision)
     SUCCESS,   ///< New pair inserted successfully
     DUPLICATE  ///< Insert did not succeed, key is already present
   };
@@ -285,7 +287,7 @@ class concurrent_unordered_map {
     pair_packer<pair_type> const new_pair{insert_pair};
     pair_packer<pair_type> const old{
       atomicCAS(reinterpret_cast<typename pair_packer<pair_type>::packed_type*>(insert_location),
-                unused.packed,
+        unused.packed,
                 new_pair.packed)};
 
     if (old.packed == unused.packed) { return insert_result::SUCCESS; }
@@ -319,7 +321,7 @@ class concurrent_unordered_map {
     return insert_result::CONTINUE;
   }
 
- public:
+public:
   /**
    * @brief Attempts to insert a key, value pair into the map.
    *

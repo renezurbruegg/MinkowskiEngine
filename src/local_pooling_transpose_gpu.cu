@@ -32,6 +32,7 @@
 #include "types.hpp"
 #include "utils.hpp"
 
+#include <thrust/execution_policy.h>
 #include "pooling_avg_kernel.cuh"
 
 // Ninja
